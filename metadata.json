@@ -1,0 +1,5 @@
+{
+  "name": "云端日记 (Cloud Diary)",
+  "description": "一个全功能的智能日记本应用。支持私密、公开、加密及团体日记。集成AI自动提取重大事件，支持PDF导出与分享。包含完善的权限管理与管理员系统。",
+  "requestFramePermissions": []
+}
