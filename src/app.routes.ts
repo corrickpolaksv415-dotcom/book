@@ -5,6 +5,9 @@ import { PublicFeedComponent } from './components/public-feed.component';
 import { PersonalCenterComponent } from './components/personal-center.component';
 import { DiaryEditorComponent } from './components/diary-editor.component';
 import { DiaryDetailComponent } from './components/diary-detail.component';
+import { FeedbackComponent } from './components/feedback.component';
+import { LeaderboardComponent } from './components/leaderboard.component';
+import { NotificationsComponent } from './components/notifications.component';
 import { inject } from '@angular/core';
 import { AuthService } from './services/auth.service';
 
@@ -20,4 +23,7 @@ export const routes: Routes = [
   { path: 'personal', component: PersonalCenterComponent, canActivate: [authGuard] },
   { path: 'write', component: DiaryEditorComponent, canActivate: [authGuard] },
   { path: 'diary/:id', component: DiaryDetailComponent },
+  { path: 'feedback', component: FeedbackComponent },
+  { path: 'leaderboard', component: LeaderboardComponent },
+  { path: 'notifications', component: NotificationsComponent, canActivate: [authGuard] },
 ];

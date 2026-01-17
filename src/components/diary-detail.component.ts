@@ -74,9 +74,12 @@ import * as htmlToImage from 'html-to-image';
                           {{ getVisibilityLabel(diary()!.visibility) }}
                       </span>
                   </div>
-                  <span class="text-stone-400 text-sm font-serif italic">
-                    {{ diary()!.date | date:'yyyy年MM月dd日 HH:mm' }}
-                  </span>
+                  <div class="flex flex-col items-end text-sm text-stone-400 font-serif italic">
+                    <span>{{ diary()!.date | date:'yyyy年MM月dd日 HH:mm' }}</span>
+                    @if (diary()!.lastEdited && diary()!.lastEdited !== diary()!.date) {
+                      <span class="text-xs text-stone-300">编辑于: {{ diary()!.lastEdited | date:'MM/dd HH:mm' }}</span>
+                    }
+                  </div>
                 </div>
                 
                 <h1 class="text-3xl md:text-4xl font-serif text-stone-900 leading-tight mb-4">

@@ -40,12 +40,34 @@ import { RouterLink } from '@angular/router';
             }
 
             <div class="p-6 flex-1 flex flex-col">
-              <div class="flex items-center gap-2 mb-4 text-xs text-stone-400">
-                <span class="bg-stone-100 px-2 py-1 rounded text-stone-600 font-medium">
-                  {{ diary.authorName }}
-                </span>
-                <span>•</span>
-                <span>{{ diary.date | date:'yyyy年MM月dd日' }}</span>
+              <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2 text-xs text-stone-400">
+                  <span class="bg-stone-100 px-2 py-1 rounded text-stone-600 font-medium">
+                    {{ diary.authorName }}
+                  </span>
+                  <span>•</span>
+                  <span>{{ diary.date | date:'yyyy年MM月dd日' }}</span>
+                </div>
+                
+                <!-- Social Actions for Author -->
+                @if (auth.currentUser() && auth.currentUser()?.uid !== diary.uid) {
+                  <div class="flex items-center gap-1">
+                    <button (click)="toggleFollow(diary.uid)" 
+                            [class.text-indigo-600]="isFollowing(diary.uid)"
+                            class="text-xs px-2 py-0.5 rounded border hover:bg-stone-50 transition-colors"
+                            [class.border-indigo-200]="isFollowing(diary.uid)"
+                            [class.border-stone-200]="!isFollowing(diary.uid)">
+                      {{ isFollowing(diary.uid) ? '已关注' : '+ 关注' }}
+                    </button>
+                    <button (click)="likeUser(diary.uid)" 
+                            class="text-xs p-0.5 rounded text-pink-400 hover:text-pink-600 hover:bg-pink-50" 
+                            title="给作者点赞 (每天一次)">
+                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                         <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z" />
+                       </svg>
+                    </button>
+                  </div>
+                }
               </div>
 
               <a [routerLink]="['/diary', diary.id]" class="block flex-1">
@@ -70,15 +92,15 @@ import { RouterLink } from '@angular/router';
 
               <!-- Action Footer -->
               <div class="pt-4 border-t border-stone-100 flex items-center justify-between mt-auto">
-                 <!-- Like Button -->
+                 <!-- Like Button (Diary) -->
                  <button (click)="toggleLike(diary.id)" 
-                         [class.text-red-500]="diaryService.isLikedInSession(diary.id)"
-                         [class.text-stone-400]="!diaryService.isLikedInSession(diary.id)"
+                         [class.text-red-500]="hasLiked(diary.id)"
+                         [class.text-stone-400]="!hasLiked(diary.id)"
                          class="flex items-center gap-1.5 hover:text-red-500 transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" [attr.fill]="diaryService.isLikedInSession(diary.id) ? 'currentColor' : 'none'" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+                    <svg xmlns="http://www.w3.org/2000/svg" [attr.fill]="hasLiked(diary.id) ? 'currentColor' : 'none'" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z" />
                     </svg>
-                    <span class="text-sm font-medium">{{ diary.likes || 0 }}</span>
+                    <span class="text-sm font-medium">{{ diary.likedBy.length || 0 }}</span>
                  </button>
 
                  <!-- Admin Pin Button -->
@@ -100,10 +122,32 @@ export class PublicFeedComponent {
   auth = inject(AuthService);
 
   toggleLike(id: string) {
+    if (!this.auth.currentUser()) {
+      alert('请先登录');
+      return;
+    }
     this.diaryService.toggleLike(id);
+  }
+
+  hasLiked(id: string): boolean {
+    return this.diaryService.hasLiked(id);
   }
 
   togglePin(id: string) {
     this.diaryService.togglePin(id);
+  }
+
+  toggleFollow(targetUid: string) {
+    this.auth.toggleFollow(targetUid);
+  }
+
+  isFollowing(targetUid: string): boolean {
+    const user = this.auth.currentUser();
+    return user ? user.following.includes(targetUid) : false;
+  }
+
+  likeUser(targetUid: string) {
+    const result = this.auth.likeUser(targetUid);
+    alert(result.msg);
   }
 }

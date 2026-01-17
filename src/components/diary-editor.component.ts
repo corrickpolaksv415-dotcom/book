@@ -54,7 +54,20 @@ import { AiService } from '../services/ai.service';
 
         <!-- Content -->
         <div>
-          <label class="block text-sm font-medium text-stone-600 mb-2">正文</label>
+          <div class="flex items-center justify-between mb-2">
+            <label class="block text-sm font-medium text-stone-600">正文</label>
+            
+            <!-- Template Selectors -->
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-stone-400">使用模板:</span>
+              <div class="flex gap-1">
+                <button type="button" (click)="useTemplate('travel')" class="text-xs px-2 py-1 rounded bg-stone-100 hover:bg-blue-50 text-stone-600 hover:text-blue-600 transition-colors">旅行</button>
+                <button type="button" (click)="useTemplate('reading')" class="text-xs px-2 py-1 rounded bg-stone-100 hover:bg-green-50 text-stone-600 hover:text-green-600 transition-colors">读书</button>
+                <button type="button" (click)="useTemplate('mood')" class="text-xs px-2 py-1 rounded bg-stone-100 hover:bg-pink-50 text-stone-600 hover:text-pink-600 transition-colors">心情</button>
+              </div>
+            </div>
+          </div>
+          
           <textarea formControlName="content" rows="12" placeholder="记录下此刻的心情..."
                     class="w-full px-4 py-3 rounded-lg border border-stone-200 focus:ring-2 focus:ring-stone-400 focus:outline-none bg-stone-50 font-serif leading-relaxed resize-y"></textarea>
         </div>
@@ -129,7 +142,7 @@ import { AiService } from '../services/ai.service';
   `
 })
 export class DiaryEditorComponent {
-  fb = inject(FormBuilder);
+  fb: FormBuilder = inject(FormBuilder);
   diaryService = inject(DiaryService);
   aiService = inject(AiService);
   router = inject(Router);
@@ -145,8 +158,47 @@ export class DiaryEditorComponent {
     allowedUsers: ['']
   });
 
+  templates: Record<string, string> = {
+    travel: `📍 地点：
+🌤️ 天气：
+🚗 交通：
+
+📝 今日见闻：
+(在这里记录你的一天...)
+
+📸 最难忘的瞬间：`,
+    reading: `📖 书名：
+👤 作者：
+⭐ 评分：⭐⭐⭐⭐⭐
+
+💭 核心感悟：
+(在这里写下你的读书心得...)
+
+🖊️ 金句摘抄：`,
+    mood: `📅 心情指数：😊
+🌈 此时此刻：
+
+💭 碎碎念：
+(记录当下的想法...)
+
+✨ 小确幸：`
+  };
+
   setVisibility(v: Visibility) {
     this.visibility.set(v);
+  }
+
+  useTemplate(type: string) {
+    const currentContent = this.form.get('content')?.value;
+    const templateContent = this.templates[type];
+
+    if (currentContent && currentContent.trim().length > 0) {
+      if (!confirm('当前内容不为空，使用模板将覆盖现有内容。确定继续吗？')) {
+        return;
+      }
+    }
+    
+    this.form.patchValue({ content: templateContent });
   }
 
   onFileSelected(event: Event) {

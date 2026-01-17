@@ -10,14 +10,15 @@ export interface Diary {
   authorName: string;
   title: string;
   content: string;
-  coverImage?: string; // Base64 string for the cover
-  date: number;
+  coverImage?: string;
+  date: number; // Creation date
+  lastEdited: number; // Last modification date
   visibility: Visibility;
-  secretKey?: string; // For 'secret' visibility
-  allowedUsers?: string[]; // For 'group' visibility (list of usernames)
+  secretKey?: string; 
+  allowedUsers?: string[]; 
   majorEvents: string[];
   isPinned: boolean;
-  likes: number; // Like count
+  likedBy: string[]; // List of UIDs who liked this diary
 }
 
 @Injectable({
@@ -27,13 +28,8 @@ export class DiaryService {
   private authService = inject(AuthService);
   private storageKey = 'app_diaries_v1';
   
-  // State
   private diariesSignal = signal<Diary[]>(this.loadDiaries());
   
-  // Track which diaries the current session has liked (for UI state only, as we don't have a backend to track user-likes persistently per user)
-  private sessionLikedIds = signal<Set<string>>(new Set());
-
-  // Selectors
   readonly allDiaries = this.diariesSignal.asReadonly();
   
   readonly publicFeed = computed(() => {
@@ -53,7 +49,6 @@ export class DiaryService {
       .sort((a, b) => b.date - a.date);
   });
 
-  // Admin view: All diaries
   readonly adminAllDiaries = computed(() => {
     if (!this.authService.isAdmin()) return [];
     return this.diariesSignal().sort((a, b) => b.date - a.date);
@@ -65,11 +60,13 @@ export class DiaryService {
     try {
       const data = localStorage.getItem(this.storageKey);
       const parsed = data ? JSON.parse(data) : [];
-      // Migration: Ensure new fields exist on old records
+      // Migration
       return parsed.map((d: any) => ({
         ...d,
-        likes: d.likes || 0,
-        coverImage: d.coverImage || undefined
+        likedBy: Array.isArray(d.likedBy) ? d.likedBy : [],
+        coverImage: d.coverImage || undefined,
+        // Migration: If lastEdited is missing, default to creation date
+        lastEdited: d.lastEdited || d.date 
       }));
     } catch {
       return [];
@@ -85,19 +82,21 @@ export class DiaryService {
     }
   }
 
-  addDiary(diary: Omit<Diary, 'id' | 'date' | 'isPinned' | 'uid' | 'authorName' | 'likes'>) {
+  addDiary(diary: Omit<Diary, 'id' | 'date' | 'lastEdited' | 'isPinned' | 'uid' | 'authorName' | 'likedBy'>) {
     const user = this.authService.currentUser();
     if (!user) return;
 
+    const now = Date.now();
     const newDiary: Diary = {
       ...diary,
       id: crypto.randomUUID(),
-      date: Date.now(),
+      date: now,
+      lastEdited: now,
       uid: user.uid,
       authorName: user.username,
       isPinned: false,
-      likes: 0,
-      majorEvents: diary.majorEvents || [] // Ensure array
+      likedBy: [],
+      majorEvents: diary.majorEvents || []
     };
 
     const current = this.diariesSignal();
@@ -109,7 +108,14 @@ export class DiaryService {
     const index = current.findIndex(d => d.id === id);
     if (index !== -1) {
       const updated = [...current];
-      updated[index] = { ...updated[index], ...updates };
+      // Update lastEdited automatically if content or title changed
+      const isContentChange = updates.title || updates.content || updates.coverImage;
+      const finalUpdates = {
+        ...updates,
+        lastEdited: isContentChange ? Date.now() : updated[index].lastEdited
+      };
+      
+      updated[index] = { ...updated[index], ...finalUpdates };
       this.saveDiaries(updated);
     }
   }
@@ -117,6 +123,11 @@ export class DiaryService {
   deleteDiary(id: string) {
     const current = this.diariesSignal();
     this.saveDiaries(current.filter(d => d.id !== id));
+  }
+
+  deleteDiariesByAuthor(uid: string) {
+    const current = this.diariesSignal();
+    this.saveDiaries(current.filter(d => d.uid !== uid));
   }
 
   togglePin(id: string) {
@@ -128,59 +139,52 @@ export class DiaryService {
   }
 
   toggleLike(id: string) {
-    // If already liked in this session, don't increase count (simple prevention)
-    if (this.sessionLikedIds().has(id)) {
-        return; 
-    }
+    const user = this.authService.currentUser();
+    if (!user) return; 
 
     const diary = this.diariesSignal().find(d => d.id === id);
     if (diary) {
-      this.updateDiary(id, { likes: (diary.likes || 0) + 1 });
+      const hasLiked = diary.likedBy.includes(user.uid);
+      let newLikedBy = [];
       
-      // Update session tracking
-      const newSet = new Set(this.sessionLikedIds());
-      newSet.add(id);
-      this.sessionLikedIds.set(newSet);
+      if (hasLiked) {
+         newLikedBy = diary.likedBy.filter(uid => uid !== user.uid);
+      } else {
+         newLikedBy = [...diary.likedBy, user.uid];
+      }
+      
+      this.updateDiary(id, { likedBy: newLikedBy });
     }
   }
 
-  isLikedInSession(id: string): boolean {
-      return this.sessionLikedIds().has(id);
+  hasLiked(id: string): boolean {
+    const user = this.authService.currentUser();
+    const diary = this.getDiaryById(id);
+    if (!user || !diary) return false;
+    return diary.likedBy.includes(user.uid);
+  }
+  
+  getLikeCount(id: string): number {
+      const diary = this.getDiaryById(id);
+      return diary ? diary.likedBy.length : 0;
   }
 
   getDiaryById(id: string): Diary | undefined {
     return this.diariesSignal().find(d => d.id === id);
   }
 
-  // Permission Logic
   canView(diary: Diary, secretKeyInput?: string): boolean {
     const user = this.authService.currentUser();
-    
-    // 1. Admin & Owner can view EVERYTHING
     if (this.authService.isAdmin()) return true;
-
-    // 2. Author can always view
     if (user && user.uid === diary.uid) return true;
-
-    // 3. Public
     if (diary.visibility === 'public') return true;
-
-    // 4. Private
-    if (diary.visibility === 'private') return false; // Handled by Author check above
-
-    // 5. Secret
-    if (diary.visibility === 'secret') {
-      return diary.secretKey === secretKeyInput;
-    }
-
-    // 6. Group
+    if (diary.visibility === 'private') return false;
+    if (diary.visibility === 'secret') return diary.secretKey === secretKeyInput;
     if (diary.visibility === 'group') {
       if (!user) return false;
-      // Simple username check
       const allowed = diary.allowedUsers || [];
       return allowed.includes(user.username);
     }
-
     return false;
   }
 }
