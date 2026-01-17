@@ -1,5 +1,7 @@
 
 import { Injectable, signal } from '@angular/core';
+import { db } from './firebase.config';
+import { collection, doc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 
 export interface Announcement {
   id: string;
@@ -12,35 +14,46 @@ export interface Announcement {
   providedIn: 'root'
 })
 export class AnnouncementService {
-  private readonly STORAGE_KEY = 'app_announcements_v1';
-  
-  private announcementSignal = signal<Announcement | null>(this.load());
+  private announcementSignal = signal<Announcement | null>(null);
   readonly currentAnnouncement = this.announcementSignal.asReadonly();
 
-  constructor() {}
-
-  private load(): Announcement | null {
-    try {
-      const data = localStorage.getItem(this.STORAGE_KEY);
-      return data ? JSON.parse(data) : null;
-    } catch {
-      return null;
-    }
+  constructor() {
+    this.init();
   }
 
-  setAnnouncement(content: string) {
+  private init() {
+    // We assume only 1 active announcement for simplicity, stored in a fixed doc or collection
+    onSnapshot(collection(db, 'announcements'), (snap) => {
+        if (snap.empty) {
+            this.announcementSignal.set(null);
+        } else {
+            // Get the most recent one
+            const anns: Announcement[] = [];
+            snap.forEach(d => anns.push(d.data() as Announcement));
+            // Sort by date desc
+            anns.sort((a,b) => b.date - a.date);
+            this.announcementSignal.set(anns[0] || null);
+        }
+    });
+  }
+
+  async setAnnouncement(content: string) {
+    const id = crypto.randomUUID();
     const ann: Announcement = {
-      id: crypto.randomUUID(),
+      id,
       content,
       active: true,
       date: Date.now()
     };
-    this.announcementSignal.set(ann);
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(ann));
+    // For this app logic, let's clear old ones first or just add new one and frontend picks top
+    await setDoc(doc(db, 'announcements', id), ann);
   }
 
-  clearAnnouncement() {
-    this.announcementSignal.set(null);
-    localStorage.removeItem(this.STORAGE_KEY);
+  async clearAnnouncement() {
+    // Delete the current one
+    const current = this.announcementSignal();
+    if (current) {
+        await deleteDoc(doc(db, 'announcements', current.id));
+    }
   }
 }

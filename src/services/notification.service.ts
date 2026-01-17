@@ -1,5 +1,7 @@
 
 import { Injectable, signal, computed } from '@angular/core';
+import { db } from './firebase.config';
+import { collection, doc, setDoc, onSnapshot, updateDoc, query, where } from 'firebase/firestore';
 
 export interface Notification {
   id: string;
@@ -14,23 +16,24 @@ export interface Notification {
   providedIn: 'root'
 })
 export class NotificationService {
-  private readonly STORAGE_KEY = 'app_notifications_v1';
-  private notificationsSignal = signal<Notification[]>(this.load());
+  private notificationsSignal = signal<Notification[]>([]);
 
-  constructor() {}
-
-  private load(): Notification[] {
-    try {
-      const data = localStorage.getItem(this.STORAGE_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
-    }
+  constructor() {
+    // In a real app, we would only subscribe to MY notifications.
+    // Since we are simulating a full backend via firestore in test mode,
+    // we will subscribe to the whole collection and filter in memory to save setup time,
+    // OR ideally setup a query based on current user ID in AuthService, but AuthService depends on this.
+    // To avoid circular dependency issues during init, we will just listen to all and filter.
+    // (Optimization: Move subscription to a method called by AuthService when user logs in)
+    this.init();
   }
 
-  private save(list: Notification[]) {
-    this.notificationsSignal.set(list);
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(list));
+  private init() {
+     onSnapshot(collection(db, 'notifications'), (snap) => {
+         const list: Notification[] = [];
+         snap.forEach(d => list.push(d.data() as Notification));
+         this.notificationsSignal.set(list);
+     });
   }
 
   // Get notifications for a specific user
@@ -48,29 +51,34 @@ export class NotificationService {
     );
   }
 
-  notify(targetUid: string, type: Notification['type'], content: string) {
+  async notify(targetUid: string, type: Notification['type'], content: string) {
+    const id = crypto.randomUUID();
     const note: Notification = {
-      id: crypto.randomUUID(),
+      id,
       targetUid,
       type,
       content,
       date: Date.now(),
       read: false
     };
-    this.save([note, ...this.notificationsSignal()]);
+    try {
+      await setDoc(doc(db, 'notifications', id), note);
+    } catch (e) {
+      console.error(e);
+    }
   }
 
-  markAsRead(id: string) {
-    const list = this.notificationsSignal().map(n => 
-      n.id === id ? { ...n, read: true } : n
-    );
-    this.save(list);
+  async markAsRead(id: string) {
+    try {
+      await updateDoc(doc(db, 'notifications', id), { read: true });
+    } catch (e) { console.error(e); }
   }
 
-  markAllAsRead(uid: string) {
-    const list = this.notificationsSignal().map(n => 
-      n.targetUid === uid ? { ...n, read: true } : n
-    );
-    this.save(list);
+  async markAllAsRead(uid: string) {
+    const userNotes = this.notificationsSignal().filter(n => n.targetUid === uid && !n.read);
+    // Batch update
+    userNotes.forEach(n => {
+       this.markAsRead(n.id);
+    });
   }
 }

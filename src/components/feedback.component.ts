@@ -56,9 +56,9 @@ import { AuthService } from '../services/auth.service';
             </div>
 
             <div class="pt-4">
-              <button type="submit" [disabled]="!content" 
+              <button type="submit" [disabled]="!content || isSubmitting()" 
                       class="w-full bg-stone-800 hover:bg-stone-900 text-white py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                提交反馈
+                {{ isSubmitting() ? '提交中...' : '提交反馈' }}
               </button>
             </div>
           </form>
@@ -144,16 +144,19 @@ export class FeedbackComponent {
   content = '';
   contact = '';
   submitted = signal(false);
+  isSubmitting = signal(false);
 
-  onSubmit() {
+  async onSubmit() {
     if (!this.content) return;
     
-    this.feedbackService.addFeedback({
+    this.isSubmitting.set(true);
+    await this.feedbackService.addFeedback({
       type: this.type,
       content: this.content,
       contact: this.contact
     });
     
+    this.isSubmitting.set(false);
     this.submitted.set(true);
   }
 
@@ -169,6 +172,7 @@ export class FeedbackComponent {
 
   submitReply(id: string, reply: string) {
     if (!reply.trim()) return;
+    // Replies are small updates, okay to be fire-and-forget, but theoretically could await
     this.feedbackService.replyToFeedback(id, reply);
   }
 

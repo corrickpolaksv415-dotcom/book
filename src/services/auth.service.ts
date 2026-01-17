@@ -1,11 +1,13 @@
 
 import { Injectable, signal, computed, inject } from '@angular/core';
 import { NotificationService } from './notification.service';
+import { db } from './firebase.config';
+import { collection, doc, setDoc, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
 
 export interface User {
   uid: string;
   username: string;
-  password?: string; // Stored in DB, removed from session
+  password?: string; // Stored in DB
   isAdmin: boolean;
   
   // Profile Customization
@@ -18,7 +20,7 @@ export interface User {
   likesReceived: number; // Total likes on user profile
   
   // Tracking for limits
-  likedUsersLog?: Record<string, number>; // { targetUid: timestamp } - Last time I liked this user
+  likedUsersLog?: Record<string, number>; // { targetUid: timestamp }
 }
 
 @Injectable({
@@ -28,7 +30,6 @@ export class AuthService {
   private notificationService = inject(NotificationService);
   
   private readonly STORAGE_KEY = 'app_session_v1';
-  private readonly DB_KEY = 'app_users_db_v1';
   
   private readonly MASTER_USER = {
     username: 'awealy',
@@ -39,15 +40,65 @@ export class AuthService {
 
   // Reactive State
   private currentUserSignal = signal<User | null>(this.loadSession());
-  private usersSignal = signal<User[]>(this.loadUsersFromStorage());
+  private usersSignal = signal<User[]>([]);
   
   readonly currentUser = this.currentUserSignal.asReadonly();
-  readonly allUsers = this.usersSignal.asReadonly(); // For Leaderboard
+  readonly allUsers = this.usersSignal.asReadonly();
   readonly isAdmin = computed(() => this.currentUserSignal()?.isAdmin ?? false);
 
-  constructor() {}
+  constructor() {
+    this.initRealtimeUsers();
+  }
 
-  // --- Data Access ---
+  // --- Realtime Data Sync ---
+
+  private initRealtimeUsers() {
+    // Listen to 'users' collection changes in real-time
+    onSnapshot(collection(db, 'users'), (snapshot) => {
+      const users: User[] = [];
+      snapshot.forEach((doc) => {
+        users.push(doc.data() as User);
+      });
+      
+      this.usersSignal.set(users);
+
+      // Check if Master User exists, if not create it (Seed DB)
+      if (!users.find(u => u.uid === this.MASTER_USER.uid)) {
+        this.createMasterUser();
+      }
+
+      // Refresh current user session data from latest DB data
+      const current = this.currentUserSignal();
+      if (current) {
+        const fresh = users.find(u => u.uid === current.uid);
+        if (fresh) {
+           // Don't overwrite the local session password if it's missing in some flows, but usually fine
+           this.setSession(fresh); 
+        } else {
+           // User was deleted remotely
+           this.logout(); 
+        }
+      }
+    });
+  }
+
+  private async createMasterUser() {
+    const master: User = {
+      uid: this.MASTER_USER.uid,
+      username: this.MASTER_USER.username,
+      password: this.MASTER_USER.password,
+      isAdmin: true,
+      followers: [],
+      following: [],
+      likesReceived: 9999,
+      likedUsersLog: {},
+      bio: '我是站主，欢迎来到云端日记！',
+      profileCover: undefined
+    };
+    await setDoc(doc(db, 'users', master.uid), master);
+  }
+
+  // --- Session Management (Local) ---
 
   private loadSession(): User | null {
     try {
@@ -58,74 +109,23 @@ export class AuthService {
     }
   }
 
-  private loadUsersFromStorage(): User[] {
-    try {
-      const stored = localStorage.getItem(this.DB_KEY);
-      let users = stored ? JSON.parse(stored) : [];
-      // Migration: Ensure arrays exist
-      users = users.map((u: any) => ({
-        ...u,
-        followers: u.followers || [],
-        following: u.following || [],
-        likesReceived: u.likesReceived || 0,
-        likedUsersLog: u.likedUsersLog || {},
-        bio: u.bio || '',
-        profileCover: u.profileCover || undefined
-      }));
-
-      // Ensure Master User exists for social interactions (Leaderboard etc)
-      if (!users.find((u: User) => u.uid === this.MASTER_USER.uid)) {
-        const master: User = {
-          uid: this.MASTER_USER.uid,
-          username: this.MASTER_USER.username,
-          password: this.MASTER_USER.password,
-          isAdmin: true,
-          followers: [],
-          following: [],
-          likesReceived: 9999, // Master starts with some likes :)
-          likedUsersLog: {},
-          bio: '我是站主，欢迎来到云端日记！',
-          profileCover: undefined
-        };
-        users.push(master);
-      }
-
-      return users;
-    } catch {
-      return [];
-    }
-  }
-
-  getUsers(): User[] {
-    return this.usersSignal();
-  }
-
-  private saveUsers(users: User[]) {
-    localStorage.setItem(this.DB_KEY, JSON.stringify(users));
-    this.usersSignal.set(users);
-    
-    // Refresh session if current user changed
-    const current = this.currentUserSignal();
-    if (current) {
-      const fresh = users.find(u => u.uid === current.uid);
-      if (fresh) this.setSession(fresh);
-    }
-  }
-
-  getUserByUid(uid: string): User | undefined {
-    return this.usersSignal().find(u => u.uid === uid);
+  private setSession(user: User) {
+    // We store the session locally so page refresh remembers login
+    this.currentUserSignal.set(user);
+    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(user));
   }
 
   // --- Auth Logic ---
 
-  register(username: string, password: string): boolean {
-    const users = this.getUsers();
+  async register(username: string, password: string): Promise<boolean> {
+    const users = this.usersSignal();
     
     if (users.find(u => u.username === username)) return false;
     if (username === this.MASTER_USER.username) return false;
 
+    const uid = crypto.randomUUID();
     const newUser: User = {
-      uid: crypto.randomUUID(),
+      uid,
       username,
       password,
       isAdmin: false,
@@ -135,23 +135,24 @@ export class AuthService {
       likedUsersLog: {}
     };
 
-    const newUsers = [...users, newUser];
-    this.saveUsers(newUsers);
-    this.setSession(newUser);
-    return true;
+    try {
+      await setDoc(doc(db, 'users', uid), newUser);
+      this.setSession(newUser);
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
   }
 
   login(username: string, password: string): boolean {
-    const users = this.getUsers();
-    
-    // Check Master explicitly or in list (list is better as it's pre-seeded now)
+    const users = this.usersSignal();
     const user = users.find(u => u.username === username && u.password === password);
     
     if (user) {
       this.setSession(user);
       return true;
     }
-
     return false;
   }
 
@@ -160,109 +161,90 @@ export class AuthService {
     localStorage.removeItem(this.STORAGE_KEY);
   }
 
-  activateAdmin(inputKey: string): boolean {
+  async activateAdmin(inputKey: string): Promise<boolean> {
     if (inputKey === this.ADMIN_KEY) {
       const current = this.currentUserSignal();
       if (current) {
-        const users = this.getUsers();
-        const idx = users.findIndex(u => u.uid === current.uid);
-        if (idx !== -1) {
-          const newUsers = [...users];
-          newUsers[idx] = { ...newUsers[idx], isAdmin: true };
-          this.saveUsers(newUsers);
-          return true;
-        }
+         try {
+           await updateDoc(doc(db, 'users', current.uid), { isAdmin: true });
+           return true;
+         } catch (e) {
+           console.error(e);
+         }
       }
     }
     return false;
   }
   
-  deleteUser(uid: string) {
+  async deleteUser(uid: string) {
     if (!this.isAdmin()) return;
-    if (uid === this.MASTER_USER.uid) return; // Cannot delete master user
+    if (uid === this.MASTER_USER.uid) return;
 
-    const users = this.usersSignal().filter(u => u.uid !== uid);
-    this.saveUsers(users);
+    try {
+      await deleteDoc(doc(db, 'users', uid));
+    } catch (e) {
+      console.error('Delete user failed', e);
+    }
   }
 
-  updateUserProfile(updates: Partial<Pick<User, 'bio' | 'profileCover' | 'username'>>): boolean {
+  async updateUserProfile(updates: Partial<Pick<User, 'bio' | 'profileCover' | 'username'>>) {
     const current = this.currentUserSignal();
-    if (!current) return false;
+    if (!current) return;
 
-    const users = this.getUsers();
-    const index = users.findIndex(u => u.uid === current.uid);
-    if (index === -1) return false;
-
-    // Merge updates
-    const updatedUser = { ...users[index], ...updates };
-    
-    // Immutable update
-    const newUsers = [...users];
-    newUsers[index] = updatedUser;
-    
-    this.saveUsers(newUsers);
-    return true;
-  }
-
-  private setSession(user: User) {
-    // Don't store password in session
-    const { password, ...safeUser } = user;
-    this.currentUserSignal.set(safeUser as User);
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(safeUser));
+    try {
+      await updateDoc(doc(db, 'users', current.uid), updates);
+    } catch (e) {
+      console.error('Update profile failed', e);
+    }
   }
 
   // --- Social Logic ---
 
-  toggleFollow(targetUid: string) {
+  async toggleFollow(targetUid: string) {
     const me = this.currentUserSignal();
     if (!me || me.uid === targetUid) return;
 
-    const users = this.getUsers();
-    const myIndex = users.findIndex(u => u.uid === me.uid);
-    const targetIndex = users.findIndex(u => u.uid === targetUid);
+    const users = this.usersSignal();
+    const targetUser = users.find(u => u.uid === targetUid);
+    if (!targetUser) return;
 
-    if (myIndex === -1 || targetIndex === -1) return;
+    // We need to update BOTH documents. 
+    // Ideally use a transaction, but separate updates are fine for this scale.
 
-    // Create copies to maintain immutability principles although simple array mutation works in local var
-    const newUsers = JSON.parse(JSON.stringify(users));
-    const myData = newUsers[myIndex];
-    const targetData = newUsers[targetIndex];
-
-    const isFollowing = myData.following.includes(targetUid);
+    const isFollowing = me.following.includes(targetUid);
+    
+    let newMyFollowing = [...me.following];
+    let newTargetFollowers = [...targetUser.followers];
 
     if (isFollowing) {
-      // Unfollow
-      myData.following = myData.following.filter((id: string) => id !== targetUid);
-      targetData.followers = targetData.followers.filter((id: string) => id !== me.uid);
+      newMyFollowing = newMyFollowing.filter(id => id !== targetUid);
+      newTargetFollowers = newTargetFollowers.filter(id => id !== me.uid);
     } else {
-      // Follow
-      myData.following.push(targetUid);
-      targetData.followers.push(me.uid);
-      
+      newMyFollowing.push(targetUid);
+      newTargetFollowers.push(me.uid);
       // Notify
       this.notificationService.notify(targetUid, 'follow', `${me.username} 关注了你`);
     }
 
-    this.saveUsers(newUsers);
+    try {
+      await updateDoc(doc(db, 'users', me.uid), { following: newMyFollowing });
+      await updateDoc(doc(db, 'users', targetUid), { followers: newTargetFollowers });
+    } catch (e) {
+      console.error('Follow failed', e);
+    }
   }
 
-  likeUser(targetUid: string): { success: boolean, msg: string } {
+  async likeUser(targetUid: string): Promise<{ success: boolean, msg: string }> {
     const me = this.currentUserSignal();
     if (!me) return { success: false, msg: '请先登录' };
     if (me.uid === targetUid) return { success: false, msg: '不能给自己点赞' };
 
-    const users = this.getUsers();
-    const myIndex = users.findIndex(u => u.uid === me.uid);
-    const targetIndex = users.findIndex(u => u.uid === targetUid);
+    const users = this.usersSignal();
+    const targetUser = users.find(u => u.uid === targetUid);
+    if (!targetUser) return { success: false, msg: '用户不存在' };
 
-    if (myIndex === -1 || targetIndex === -1) return { success: false, msg: '用户不存在' };
-
-    const newUsers = JSON.parse(JSON.stringify(users));
-    const myData = newUsers[myIndex];
-    const targetData = newUsers[targetIndex];
-    
-    // Check Daily Limit
-    const lastLikeTime = myData.likedUsersLog?.[targetUid] || 0;
+    // Check Daily Limit locally first
+    const lastLikeTime = me.likedUsersLog?.[targetUid] || 0;
     const now = Date.now();
     const oneDay = 24 * 60 * 60 * 1000;
     
@@ -271,16 +253,22 @@ export class AuthService {
     }
 
     // Process Like
-    targetData.likesReceived = (targetData.likesReceived || 0) + 1;
-    
-    // Log Time
-    if (!myData.likedUsersLog) myData.likedUsersLog = {};
-    myData.likedUsersLog[targetUid] = now;
+    try {
+       // Update Target
+       await updateDoc(doc(db, 'users', targetUid), {
+         likesReceived: (targetUser.likesReceived || 0) + 1
+       });
 
-    this.saveUsers(newUsers);
-    
-    this.notificationService.notify(targetUid, 'like', `${me.username} 给你的主页点赞了`);
-
-    return { success: true, msg: '点赞成功' };
+       // Update Me (Log)
+       const newLog = { ...(me.likedUsersLog || {}) };
+       newLog[targetUid] = now;
+       await updateDoc(doc(db, 'users', me.uid), { likedUsersLog: newLog });
+       
+       this.notificationService.notify(targetUid, 'like', `${me.username} 给你的主页点赞了`);
+       return { success: true, msg: '点赞成功' };
+    } catch (e) {
+       console.error(e);
+       return { success: false, msg: '点赞失败' };
+    }
   }
 }

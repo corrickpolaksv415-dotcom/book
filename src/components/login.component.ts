@@ -40,8 +40,14 @@ import { AuthService } from '../services/auth.service';
           </div>
         }
 
-        <button type="submit" [disabled]="form.invalid"
-                class="w-full bg-stone-800 hover:bg-stone-900 text-white py-3 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+        <button type="submit" [disabled]="form.invalid || isLoading()"
+                class="w-full bg-stone-800 hover:bg-stone-900 text-white py-3 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+          @if (isLoading()) {
+            <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          }
           {{ isRegister() ? '立即注册' : '登录' }}
         </button>
 
@@ -61,6 +67,7 @@ export class LoginComponent {
 
   isRegister = signal(false);
   error = signal('');
+  isLoading = signal(false);
 
   form = this.fb.group({
     username: ['', [Validators.required, Validators.minLength(2)]],
@@ -73,14 +80,15 @@ export class LoginComponent {
     this.form.reset();
   }
 
-  onSubmit() {
+  async onSubmit() {
     if (this.form.invalid) return;
 
+    this.isLoading.set(true);
     const { username, password } = this.form.value;
     if (!username || !password) return;
 
     if (this.isRegister()) {
-      const success = this.auth.register(username, password);
+      const success = await this.auth.register(username, password);
       if (success) {
         this.router.navigate(['/personal']);
       } else {
@@ -94,5 +102,6 @@ export class LoginComponent {
         this.error.set('用户名或密码错误');
       }
     }
+    this.isLoading.set(false);
   }
 }

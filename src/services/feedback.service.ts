@@ -2,6 +2,8 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { NotificationService } from './notification.service';
 import { AuthService } from './auth.service';
+import { db } from './firebase.config';
+import { collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc } from 'firebase/firestore';
 
 export interface Feedback {
   id: string;
@@ -22,53 +24,45 @@ export class FeedbackService {
   private notificationService = inject(NotificationService);
   private authService = inject(AuthService);
 
-  private readonly STORAGE_KEY = 'app_feedback_v1';
-  private feedbackSignal = signal<Feedback[]>(this.loadFeedback());
+  private feedbackSignal = signal<Feedback[]>([]);
 
   readonly allFeedback = this.feedbackSignal.asReadonly();
 
-  constructor() {}
-
-  private loadFeedback(): Feedback[] {
-    try {
-      const data = localStorage.getItem(this.STORAGE_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch {
-      return [];
-    }
+  constructor() {
+    this.init();
   }
 
-  private save() {
-    try {
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.feedbackSignal()));
-    } catch (e) {
-      console.error('Failed to save feedback', e);
-    }
+  private init() {
+      onSnapshot(collection(db, 'feedback'), (snap) => {
+          const list: Feedback[] = [];
+          snap.forEach(d => list.push(d.data() as Feedback));
+          // sort by date desc
+          list.sort((a,b) => b.date - a.date);
+          this.feedbackSignal.set(list);
+      });
   }
 
-  addFeedback(feedback: Pick<Feedback, 'type' | 'content' | 'contact'>) {
+  async addFeedback(feedback: Pick<Feedback, 'type' | 'content' | 'contact'>) {
     const user = this.authService.currentUser();
+    const id = crypto.randomUUID();
     const newFeedback: Feedback = {
       ...feedback,
-      id: crypto.randomUUID(),
+      id,
       uid: user ? user.uid : undefined,
       username: user ? user.username : 'Guest',
       date: Date.now()
     };
-    this.feedbackSignal.update(list => [newFeedback, ...list]);
-    this.save();
+    
+    await setDoc(doc(db, 'feedback', id), newFeedback);
   }
 
-  replyToFeedback(id: string, reply: string) {
+  async replyToFeedback(id: string, reply: string) {
     const target = this.feedbackSignal().find(f => f.id === id);
     
-    this.feedbackSignal.update(list => list.map(f => {
-      if (f.id === id) {
-        return { ...f, reply, replyDate: Date.now() };
-      }
-      return f;
-    }));
-    this.save();
+    await updateDoc(doc(db, 'feedback', id), {
+        reply,
+        replyDate: Date.now()
+    });
 
     // Send Notification
     if (target && target.uid) {
@@ -80,8 +74,7 @@ export class FeedbackService {
     }
   }
 
-  deleteFeedback(id: string) {
-    this.feedbackSignal.update(list => list.filter(f => f.id !== id));
-    this.save();
+  async deleteFeedback(id: string) {
+    await deleteDoc(doc(db, 'feedback', id));
   }
 }

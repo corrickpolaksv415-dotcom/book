@@ -146,8 +146,8 @@ export class PublicFeedComponent {
     return user ? user.following.includes(targetUid) : false;
   }
 
-  likeUser(targetUid: string) {
-    const result = this.auth.likeUser(targetUid);
+  async likeUser(targetUid: string) {
+    const result = await this.auth.likeUser(targetUid);
     alert(result.msg);
   }
 }

@@ -235,7 +235,8 @@ export class DiaryEditorComponent {
       allowedList = formVal.allowedUsers.split(',').map(u => u.trim()).filter(u => u.length > 0);
     }
 
-    this.diaryService.addDiary({
+    // Critical: Await the cloud save
+    await this.diaryService.addDiary({
       title: formVal.title!,
       content: formVal.content!,
       coverImage: this.previewImage() || undefined,

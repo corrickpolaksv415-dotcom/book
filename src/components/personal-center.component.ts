@@ -130,37 +130,12 @@ import { FormsModule } from '@angular/forms';
         </div>
       </div>
 
-      <!-- Data Sync / Backup Section -->
-      <div class="bg-gradient-to-r from-indigo-50 to-blue-50 p-6 rounded-xl shadow-sm border border-indigo-100">
-        <h3 class="text-lg font-bold text-indigo-900 mb-2 flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-          </svg>
-          数据同步与备份 (多设备互通)
-        </h3>
-        <p class="text-sm text-indigo-700/80 mb-4 max-w-2xl">
-          由于本站是静态网站，数据仅保存在您当前的浏览器中。若要在手机和电脑间同步数据，请使用下方的功能：
-          <br>1. 在旧设备点击“导出数据”保存文件。
-          <br>2. 发送文件到新设备。
-          <br>3. 在新设备点击“导入数据”选择文件即可。
-        </p>
-        <div class="flex flex-wrap gap-4">
-          <button (click)="exportData()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-            </svg>
-            导出数据 (备份)
-          </button>
-          
-          <label class="bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 px-5 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 cursor-pointer shadow-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-            </svg>
-            <span class="transform rotate-180 inline-block">导出数据</span> <!-- Visual trick for icon -->
-            导入数据 (恢复)
-            <input type="file" (change)="importData($event)" accept=".json" class="hidden">
-          </label>
-        </div>
+      <!-- Cloud Sync Status Indicator -->
+      <div class="bg-green-50 p-4 rounded-xl border border-green-100 flex items-center gap-3 text-green-700 text-sm">
+         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+           <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15a4.5 4.5 0 0 0 4.5 4.5H18a3.75 3.75 0 0 0 1.332-7.257 3 3 0 0 0-3.758-3.848 5.25 5.25 0 0 0-10.233 2.33A4.502 4.502 0 0 0 2.25 15Z" />
+         </svg>
+         <span>云端数据实时同步中。您的日记在所有设备上均可访问。</span>
       </div>
 
       <!-- Admin Panel (Only for admins) -->
@@ -458,59 +433,6 @@ export class PersonalCenterComponent {
 
   constructor() {}
 
-  // --- Data Sync Logic ---
-  exportData() {
-    const data = {
-      diaries: localStorage.getItem('app_diaries_v1'),
-      users: localStorage.getItem('app_users_db_v1'),
-      theme: localStorage.getItem('app_theme_v1'),
-      session: localStorage.getItem('app_session_v1'),
-      announcements: localStorage.getItem('app_announcements_v1'),
-      notifications: localStorage.getItem('app_notifications_v1'),
-      feedback: localStorage.getItem('app_feedback_v1'),
-      searchHistory: localStorage.getItem('app_search_history_v1'),
-      timestamp: Date.now()
-    };
-    
-    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `cloud-diary-backup-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  importData(event: Event) {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-
-    if (!confirm('导入将覆盖当前设备上的所有数据，是否继续？')) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = JSON.parse(e.target?.result as string);
-        
-        if (data.diaries) localStorage.setItem('app_diaries_v1', data.diaries);
-        if (data.users) localStorage.setItem('app_users_db_v1', data.users);
-        if (data.theme) localStorage.setItem('app_theme_v1', data.theme);
-        if (data.session) localStorage.setItem('app_session_v1', data.session);
-        if (data.announcements) localStorage.setItem('app_announcements_v1', data.announcements);
-        if (data.notifications) localStorage.setItem('app_notifications_v1', data.notifications);
-        if (data.feedback) localStorage.setItem('app_feedback_v1', data.feedback);
-        if (data.searchHistory) localStorage.setItem('app_search_history_v1', data.searchHistory);
-
-        alert('数据恢复成功！页面即将刷新。');
-        window.location.reload();
-      } catch (err) {
-        console.error(err);
-        alert('导入失败：文件格式错误');
-      }
-    };
-    reader.readAsText(file);
-  }
-
   // --- Profile Edit Logic ---
   startEdit() {
     const user = this.auth.currentUser();
@@ -615,8 +537,9 @@ export class PersonalCenterComponent {
     this.sortOption.set('date-desc');
   }
 
-  tryActivateAdmin() {
-    if (this.auth.activateAdmin(this.adminKey)) {
+  async tryActivateAdmin() {
+    const success = await this.auth.activateAdmin(this.adminKey);
+    if (success) {
       this.msg.set('');
       this.adminKey = '';
       alert('管理员权限已开启！');

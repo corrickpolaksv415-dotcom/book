@@ -1,6 +1,8 @@
 
 import { Injectable, signal, computed, inject } from '@angular/core';
 import { AuthService } from './auth.service';
+import { db } from './firebase.config';
+import { collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc, query, orderBy } from 'firebase/firestore';
 
 export type Visibility = 'public' | 'private' | 'secret' | 'group';
 
@@ -11,14 +13,14 @@ export interface Diary {
   title: string;
   content: string;
   coverImage?: string;
-  date: number; // Creation date
-  lastEdited: number; // Last modification date
+  date: number; 
+  lastEdited: number; 
   visibility: Visibility;
   secretKey?: string; 
   allowedUsers?: string[]; 
   majorEvents: string[];
   isPinned: boolean;
-  likedBy: string[]; // List of UIDs who liked this diary
+  likedBy: string[];
 }
 
 @Injectable({
@@ -26,9 +28,8 @@ export interface Diary {
 })
 export class DiaryService {
   private authService = inject(AuthService);
-  private storageKey = 'app_diaries_v1';
   
-  private diariesSignal = signal<Diary[]>(this.loadDiaries());
+  private diariesSignal = signal<Diary[]>([]);
   
   readonly allDiaries = this.diariesSignal.asReadonly();
   
@@ -54,42 +55,33 @@ export class DiaryService {
     return this.diariesSignal().sort((a, b) => b.date - a.date);
   });
 
-  constructor() {}
-
-  private loadDiaries(): Diary[] {
-    try {
-      const data = localStorage.getItem(this.storageKey);
-      const parsed = data ? JSON.parse(data) : [];
-      // Migration
-      return parsed.map((d: any) => ({
-        ...d,
-        likedBy: Array.isArray(d.likedBy) ? d.likedBy : [],
-        coverImage: d.coverImage || undefined,
-        // Migration: If lastEdited is missing, default to creation date
-        lastEdited: d.lastEdited || d.date 
-      }));
-    } catch {
-      return [];
-    }
+  constructor() {
+    this.initRealtimeDiaries();
   }
 
-  private saveDiaries(diaries: Diary[]) {
-    this.diariesSignal.set(diaries);
-    try {
-      localStorage.setItem(this.storageKey, JSON.stringify(diaries));
-    } catch (e) {
-      console.error('Save failed', e);
-    }
+  private initRealtimeDiaries() {
+    const q = query(collection(db, 'diaries')); // We can sort in memory for simplicity or use orderBy in query
+    onSnapshot(q, (snapshot) => {
+      const diaries: Diary[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data() as Diary;
+        // Migration/Safety checks for missing fields
+        if (!data.likedBy) data.likedBy = [];
+        diaries.push(data);
+      });
+      this.diariesSignal.set(diaries);
+    });
   }
 
-  addDiary(diary: Omit<Diary, 'id' | 'date' | 'lastEdited' | 'isPinned' | 'uid' | 'authorName' | 'likedBy'>) {
+  async addDiary(diary: Omit<Diary, 'id' | 'date' | 'lastEdited' | 'isPinned' | 'uid' | 'authorName' | 'likedBy'>) {
     const user = this.authService.currentUser();
     if (!user) return;
 
+    const id = crypto.randomUUID();
     const now = Date.now();
     const newDiary: Diary = {
       ...diary,
-      id: crypto.randomUUID(),
+      id,
       date: now,
       lastEdited: now,
       uid: user.uid,
@@ -99,35 +91,43 @@ export class DiaryService {
       majorEvents: diary.majorEvents || []
     };
 
-    const current = this.diariesSignal();
-    this.saveDiaries([newDiary, ...current]);
-  }
-
-  updateDiary(id: string, updates: Partial<Diary>) {
-    const current = this.diariesSignal();
-    const index = current.findIndex(d => d.id === id);
-    if (index !== -1) {
-      const updated = [...current];
-      // Update lastEdited automatically if content or title changed
-      const isContentChange = updates.title || updates.content || updates.coverImage;
-      const finalUpdates = {
-        ...updates,
-        lastEdited: isContentChange ? Date.now() : updated[index].lastEdited
-      };
-      
-      updated[index] = { ...updated[index], ...finalUpdates };
-      this.saveDiaries(updated);
+    try {
+      await setDoc(doc(db, 'diaries', id), newDiary);
+    } catch (e) {
+      console.error('Add diary failed', e);
     }
   }
 
-  deleteDiary(id: string) {
-    const current = this.diariesSignal();
-    this.saveDiaries(current.filter(d => d.id !== id));
+  async updateDiary(id: string, updates: Partial<Diary>) {
+    // We need to fetch the current doc first to know if we need to update timestamp, 
+    // OR we just trust the component passed the right logic.
+    // Let's do a smart update.
+    
+    const isContentChange = updates.title || updates.content || updates.coverImage;
+    const finalUpdates = {
+      ...updates,
+      ...(isContentChange ? { lastEdited: Date.now() } : {})
+    };
+
+    try {
+      await updateDoc(doc(db, 'diaries', id), finalUpdates);
+    } catch (e) {
+      console.error('Update diary failed', e);
+    }
   }
 
-  deleteDiariesByAuthor(uid: string) {
-    const current = this.diariesSignal();
-    this.saveDiaries(current.filter(d => d.uid !== uid));
+  async deleteDiary(id: string) {
+    try {
+      await deleteDoc(doc(db, 'diaries', id));
+    } catch (e) {
+      console.error('Delete diary failed', e);
+    }
+  }
+
+  async deleteDiariesByAuthor(uid: string) {
+    // In Firestore, we must delete individually or use batch.
+    const userDiaries = this.diariesSignal().filter(d => d.uid === uid);
+    userDiaries.forEach(d => this.deleteDiary(d.id));
   }
 
   togglePin(id: string) {
@@ -138,7 +138,7 @@ export class DiaryService {
     }
   }
 
-  toggleLike(id: string) {
+  async toggleLike(id: string) {
     const user = this.authService.currentUser();
     if (!user) return; 
 
@@ -153,7 +153,7 @@ export class DiaryService {
          newLikedBy = [...diary.likedBy, user.uid];
       }
       
-      this.updateDiary(id, { likedBy: newLikedBy });
+      await this.updateDiary(id, { likedBy: newLikedBy });
     }
   }
 
@@ -164,9 +164,10 @@ export class DiaryService {
     return diary.likedBy.includes(user.uid);
   }
   
-  getLikeCount(id: string): number {
-      const diary = this.getDiaryById(id);
-      return diary ? diary.likedBy.length : 0;
+  // Helper for UI to show optimistic or session-based state if needed, 
+  // but hasLiked is reactive so it's fine.
+  isLikedInSession(id: string): boolean {
+      return this.hasLiked(id);
   }
 
   getDiaryById(id: string): Diary | undefined {
